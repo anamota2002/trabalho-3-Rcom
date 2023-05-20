@@ -8,6 +8,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include <unistd.h>
+#include <signal.h>
 #define BAUDRATE B38400
 #define MODEMDEVICE "/dev/ttyS1"
 #define _POSIX_SOURCE 1 /* POSIX compliant source */
@@ -16,6 +17,11 @@
 
 volatile int STOP=FALSE;
 //criar os estados da maquina de estado
+
+int fd;
+int count = 0;
+
+
 typedef enum {
  start,
  flag_rcv,
@@ -29,78 +35,99 @@ stateNames currentState = start;
 stateNames nextState;
 int mdeUA(char *buf, char *compara)
 {
+
 	switch(currentState)
 	{
 	case start:
-	if(buf[0]==compara[0])
+	if(buf[count]==compara[0])
 	{
 	 nextState=flag_rcv;
-	 printf("0x%.2x\n", buf[0]);
+	 printf("0x%.2x\n", buf[count]);
+	 count++;
 	}
 	 else 
 	 {
+//	 printf("%d\n",count);
 	  nextState=start;
+	  count++;
 	 }
 	 break;
 	
 	
 	 case flag_rcv:
-	 if(buf[0]==compara[1])
+	 if(buf[count]==compara[1])
 	 {
 	 
-	 printf("0x%.2x\n", buf[0]);
+	 printf("0x%.2x\n", buf[count]);
 	   nextState=a_rcv;
+	   count++;
 	 }
-	 else if(buf[0]==compara[0])
+	 else if(buf[count]==compara[0])
 	 {
+	 count++;
 	 	nextState=flag_rcv;
 	 }
-	 else
+	 else{
 	 nextState=start;
+	 count++;
+	 }
 	 break;
 	 
 	 
 	 
 	 case a_rcv:
-	 if(buf[0]=compara[2])
+	 if(buf[count]=compara[2])
 	 { 
-	  printf("0x%.2x\n", buf[0]);
+	  printf("0x%.2x\n", buf[count]);
 	   nextState=c_rcv;
+	   count++;
 	 }
-	 else if(buf[0]=compara[1])
+	 else if(buf[count]=compara[1])
 	 {
 	   nextState=flag_rcv;
+	   count++;
 	 }
-	 else
+	 else{
 	 nextState=start;
+	 count++;
+	 }
 	 break;
 	 case c_rcv:
-	 if(buf[0]==compara[3])
+	 if(buf[count]==compara[3])
 	 {
-	 	 printf("0x%.2x\n", buf[0]);
+	 	 printf("0x%.2x\n", buf[count]);
 	 	nextState=bcc_ok;
+	 	count++;
 	 }
-	 else if(buf[0]=compara[1])
+	 else if(buf[count]=compara[1])
 	 {
 	   nextState=flag_rcv;
+	   count++;
 	 }
-	 else
+	 else{
 	 nextState=start;
+	 count++;
+	 }
 	 break;
 	 
 	 case bcc_ok:
-	 if(buf[0]==compara[4])
+	 if(buf[count]==compara[4])
 	 {
-	 	printf("0x%.2x\n", buf[0]);
+	 	printf("0x%.2x\n", buf[count]);
 	 	nextState=stop;
-		//UAfim=0;//chegou ao fim
+	 	count++;
+		Uafim=0;//chegou ao fim
+		alarm(0);
 	 }
-	 else
+	 else{
 	 nextState=start;
+	 count++;
+	 }
 	 break;
 	 case stop:
 	 Uafim=0;
 	 //nextState=start;
+	 alarm(0);
 	 printf("fimmmmm\n");
 	 break;
 	}
@@ -109,22 +136,23 @@ int mdeUA(char *buf, char *compara)
 	currentState=nextState;
 	
 }
-void escreve(int* fd)
+ void escreve()
 {
-
+ printf("New termios structure set\n");
  char setsend[255]={0x5c,0x01,0x03,0x01^0x03,0x5c};// criado o set que se vai enviar
   int n_caracteres=strlen(setsend);
   int j=0;
+  alarm(3);
   for(j=0; j<n_caracteres; j++)
    {
-      write(*fd, &setsend[j], 1); // vai escrever um  caracter de cada vez
+      write(fd, &setsend[j], 1); // vai escrever um  caracter de cada vez
    }
 }
 
 int main(int argc, char** argv)
 {
-//(void) signal(SIGALRM, atende);  // instala rotina que atende interrupcao
-    int fd,c, res;
+(void) signal(SIGALRM, escreve);  // instala rotina que atende interrupcao
+    int c, res;
     struct termios oldtio,newtio;
     char buf[255];
     int i, sum = 0, speed = 0;
@@ -177,25 +205,29 @@ int main(int argc, char** argv)
         //exit(-1);
     }
 
-    printf("New termios structure set\n");
+   
 
 
 
  //   for (i = 0; i < 255; i++) {
    //     buf[i] = 'a';
    // }
-   escreve(&fd);  // chama a funcao para escrever no ficheiro uma coisa para depois chamarmos o alarme
-   
+   escreve();  // chama a funcao para escrever no ficheiro uma coisa para depois chamarmos o alarme
+   while (Uafim){
    //vamos ler o UA recerbido
    char UA_comparar[5]={0x5c, 0x01, 0x07, 0x01^0x07, 0x5c};
    char UA_recebido[255];
    read(fd,UA_recebido,255);
-   int count=0;
-   while(Uafim)
+   count = 0;
+   currentState = start;
+   
+  while(Uafim && (count != strlen(UA_recebido)))
    {
-   	 mdeUA(&UA_recebido[count],UA_comparar);
-   	 count ++;
+   	 mdeUA(UA_recebido,UA_comparar);
+   	 //printf("%d\n",count);
+   	 printf("Uafim %d\n",Uafim);
    }
+  
    
 // aqui ja enviou o set ;
 //agora vamos ler o UA mandado pelo o outro e seguir
@@ -232,6 +264,7 @@ int main(int argc, char** argv)
         exit(-1);
     }
 
+}
 
     close(fd);
     return 0;
